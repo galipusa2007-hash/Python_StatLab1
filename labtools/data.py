@@ -188,3 +188,29 @@ def recompute_hydrolysis(pairs: pd.DataFrame) -> pd.DataFrame:
     columns = ["triplet_id", "experiment", *FACTORS, "sample_type", "cycle", "mean", "mean_ctrl",
                "x_pct", "u_x_pct", "x_vessel1", "x_vessel2"]
     return merged[columns].rename(columns={"mean": "a_sample", "mean_ctrl": "a_control"})
+
+
+def all_triplets(od: pd.DataFrame) -> pd.DataFrame:
+    """Все три записи каждой тройки, включая значения, полученные формулой."""
+    wide = od.pivot(index="triplet_id", columns="position", values="absorbance").rename(columns={1: "a1", 2: "a2", 3: "a3"})
+    info = od.groupby("triplet_id")[CONDITION_KEYS + ["series"]].first()
+    out = info.join(wide).reset_index()
+    out["mean"] = out[["a1", "a2", "a3"]].mean(axis=1)
+    out["sd"] = out[["a1", "a2", "a3"]].std(axis=1, ddof=1)
+    return out
+
+def hydrolysis_all(triplets: pd.DataFrame) -> pd.DataFrame:
+    """Гидролиз X=100(1-Aпр/Aконтр) из средних ВСЕХ ТРЁХ записей.
+
+    Распространение ошибок дано как описательная условная оценка: вычисленные
+    компоненты троек не являются независимыми измерениями, поэтому SE по n=3
+    нельзя считать корректной физической неопределённостью.
+    """
+    key = ["experiment", *FACTORS]
+    controls = triplets.loc[triplets.sample_type == "control", key + ["mean", "sd"]].rename(columns={"mean":"a_control", "sd":"sd_control"})
+    samples = triplets.loc[triplets.sample_type != "control"].copy()
+    out = samples.merge(controls, on=key, validate="many_to_one")
+    out["a_sample"] = out["mean"]
+    out["x_pct"] = 100 * (1 - out["a_sample"] / out["a_control"])
+    out["descriptive_spread_pct"] = 100 * np.sqrt((out["sd"] / out["a_control"])**2 + (out["a_sample"]*out["sd_control"] / out["a_control"]**2)**2)
+    return out
